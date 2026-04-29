@@ -8,9 +8,17 @@ A simple Go program that fetches the current weather for a specified location (d
 - A Google Cloud Project with the Vertex AI API enabled
 - Authenticated with Google Cloud (e.g., via `gcloud auth application-default login`)
 
+## Installation
+
+You can download the latest compiled binary directly using our install script:
+
+```bash
+curl -sL https://raw.githubusercontent.com/ghchinoy/pirate-weather/main/scripts/install.sh | bash
+```
+
 ## Usage
 
-Run the program with `go run main.go`. You need to specify your Google Cloud Project ID, which you can pass via the `-project` flag or the `GOOGLE_CLOUD_PROJECT` environment variable.
+Run the program via the downloaded binary or with `go run main.go`. You need to specify your Google Cloud Project ID, which you can pass via the `-project` flag or the `GOOGLE_CLOUD_PROJECT` environment variable.
 
 ```bash
 # Set your project ID
