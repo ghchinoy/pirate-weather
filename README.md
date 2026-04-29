@@ -2,6 +2,8 @@
 
 A simple Go program that fetches the current weather for a specified location (default: Fort Collins, CO) and uses Google's Vertex AI (Gemini 3.1 Flash Lite Preview) to generate a response as a one-toothed pirate. It also weaves in an explanation of the difference between the A2A 0.3 and A2A 1.0 protocols.
 
+<img width="612" height="435" alt="Image" src="https://github.com/user-attachments/assets/a76bf212-28b0-44ee-a871-081f8550a155" />
+
 ## Requirements
 
 - Go 1.21+ (or compatible)
