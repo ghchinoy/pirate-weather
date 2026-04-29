@@ -1,0 +1,23 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - gosec
+    - revive
+    - gocritic
+    - err113
+    - contextcheck
+
+issues:
+  exclude-rules:
+    # httpClient.Get with a constructed URL is intentional in this CLI tool
+    - linters: [gosec]
+      text: "G107"
+    # err113: wrapping errors with %w is fine, we don't need to define sentinel errors everywhere
+    - linters: [err113]
+      text: "do not define dynamic errors"

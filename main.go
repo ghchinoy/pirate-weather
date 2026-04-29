@@ -1,3 +1,5 @@
+// Package main implements a CLI that fetches weather data and delivers it
+// as a one-toothed pirate using Vertex AI Gemini, with lipgloss terminal rendering.
 package main
 
 import (
@@ -11,20 +13,33 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"google.golang.org/genai"
 )
 
+// errNoContent is returned when the Gemini model response contains no usable text.
+var errNoContent = fmt.Errorf("no text content in model response")
+
+const (
+	defaultLocation = "fort collins, co"
+	defaultModel    = "gemini-3.1-flash-lite-preview"
+	vertexLocation  = "global"
+	wttrBaseURL     = "https://wttr.in"
+	httpTimeout     = 10 * time.Second
+)
+
+// WeatherResponse holds the structured JSON output from the Gemini model.
 type WeatherResponse struct {
-	AsciiArt       string `json:"ascii_art"`
+	ASCIIArt       string `json:"ascii_art"`
 	PrimaryColor   string `json:"primary_color"`
 	SecondaryColor string `json:"secondary_color"`
 	PirateResponse string `json:"pirate_response"`
 }
 
 func main() {
-	location := flag.String("location", "fort collins, co", "Location for the weather")
+	location := flag.String("location", defaultLocation, "Location for the weather")
 	project := flag.String("project", os.Getenv("GOOGLE_CLOUD_PROJECT"), "Google Cloud Project ID")
 	flag.Parse()
 
@@ -32,34 +47,56 @@ func main() {
 		log.Fatal("Project ID is required. Set GOOGLE_CLOUD_PROJECT or use -project flag.")
 	}
 
-	// Fetch weather data as source material
-	weatherURL := fmt.Sprintf("https://wttr.in/%s?0AT", url.QueryEscape(*location))
-	resp, err := http.Get(weatherURL)
+	weatherInfo, err := fetchWeather(*location)
 	if err != nil {
-		log.Fatalf("Failed to get weather: %v", err)
+		log.Fatalf("Failed to fetch weather: %v", err)
 	}
-	defer resp.Body.Close()
 
-	weatherBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read weather data: %v", err)
-	}
-	weatherInfo := string(weatherBytes)
-
-	// Setup GenAI Client
 	ctx := context.Background()
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		Backend:  genai.BackendVertexAI,
 		Project:  *project,
-		Location: "global",
+		Location: vertexLocation,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		log.Fatalf("Failed to create GenAI client: %v", err)
 	}
 
-	model := "gemini-3.1-flash-lite-preview"
-	
-	prompt := fmt.Sprintf(`You are Antigravity, a pirate with only one tooth. 
+	weatherResp, err := generatePirateWeather(ctx, client, *location, weatherInfo)
+	if err != nil {
+		log.Fatalf("Failed to generate pirate weather: %v", err)
+	}
+
+	renderWeatherBox(*location, weatherResp)
+}
+
+// fetchWeather retrieves the plain-text weather report from wttr.in for the given location.
+func fetchWeather(location string) (string, error) {
+	weatherURL := fmt.Sprintf("%s/%s?0AT", wttrBaseURL, url.QueryEscape(location))
+
+	httpClient := &http.Client{Timeout: httpTimeout}
+
+	resp, err := httpClient.Get(weatherURL) //nolint:noctx // simple CLI, no request context needed
+	if err != nil {
+		return "", fmt.Errorf("GET %s: %w", weatherURL, err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("warning: failed to close response body: %v", cerr)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response body: %w", err)
+	}
+
+	return string(body), nil
+}
+
+// generatePirateWeather sends the weather data to Gemini and returns a structured WeatherResponse.
+func generatePirateWeather(ctx context.Context, client *genai.Client, location, weatherInfo string) (*WeatherResponse, error) {
+	prompt := fmt.Sprintf(`You are Antigravity, a pirate with only one tooth.
 Process the following weather report for %s:
 %s
 
@@ -67,7 +104,7 @@ Tasks:
 1. Create a beautiful, multi-line ASCII art representation of this weather condition. Make it look great in a terminal.
 2. Select a primary hex color code that represents the weather (e.g., #FFD700 for sunny, #AAAAAA for cloudy).
 3. Select a secondary hex color code as an accent.
-4. Write your response telling me the weather, and weave in an explanation of the difference between the A2A 0.3 and A2A 1.0 protocols. Sound like a one-toothed pirate throughout!`, *location, weatherInfo)
+4. Write your response telling me the weather, and weave in an explanation of the difference between the A2A 0.3 and A2A 1.0 protocols. Sound like a one-toothed pirate throughout!`, location, weatherInfo)
 
 	config := &genai.GenerateContentConfig{
 		ResponseMIMEType: "application/json",
@@ -98,45 +135,53 @@ Tasks:
 		},
 	}
 
-	result, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), config)
+	result, err := client.Models.GenerateContent(ctx, defaultModel, genai.Text(prompt), config)
 	if err != nil {
-		log.Fatalf("GenerateContent error: %v", err)
+		return nil, fmt.Errorf("GenerateContent: %w", err)
 	}
 
 	for _, c := range result.Candidates {
-		if c.Content != nil {
-			for _, p := range c.Content.Parts {
-				if p.Text != "" {
-					var weatherResp WeatherResponse
-					if err := json.Unmarshal([]byte(p.Text), &weatherResp); err != nil {
-						log.Fatalf("Failed to unmarshal JSON: %v\nRaw output: %s", err, p.Text)
-					}
-
-					// Render with Lipgloss using the AI-chosen colors
-					weatherBoxStyle := lipgloss.NewStyle().
-						Bold(true).
-						Foreground(lipgloss.Color(weatherResp.PrimaryColor)).
-						Background(lipgloss.Color("#1A2B4C")).
-						Padding(1, 2).
-						MarginTop(1).
-						MarginBottom(1).
-						Border(lipgloss.RoundedBorder()).
-						BorderForeground(lipgloss.Color(weatherResp.SecondaryColor))
-
-					headerStyle := lipgloss.NewStyle().
-						Foreground(lipgloss.Color(weatherResp.SecondaryColor)).
-						Bold(true).
-						Underline(true).
-						MarginBottom(1)
-
-					header := headerStyle.Render(fmt.Sprintf("🏴‍☠️  Captain's Weather Log: %s 🏴‍☠️", strings.ToUpper(*location)))
-					asciiWeather := weatherBoxStyle.Render(fmt.Sprintf("%s\n%s", header, weatherResp.AsciiArt))
-
-					fmt.Println(asciiWeather)
-					fmt.Println()
-					fmt.Println(weatherResp.PirateResponse)
-				}
+		if c.Content == nil {
+			continue
+		}
+		for _, p := range c.Content.Parts {
+			if p.Text == "" {
+				continue
 			}
+			var weatherResp WeatherResponse
+			if err := json.Unmarshal([]byte(p.Text), &weatherResp); err != nil {
+				return nil, fmt.Errorf("unmarshal response JSON: %w", err)
+			}
+			return &weatherResp, nil
 		}
 	}
+
+	return nil, errNoContent
+}
+
+// renderWeatherBox prints the AI-generated ASCII art in a lipgloss-styled terminal box,
+// followed by the pirate's spoken response.
+func renderWeatherBox(location string, w *WeatherResponse) {
+	weatherBoxStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(w.PrimaryColor)).
+		Background(lipgloss.Color("#1A2B4C")).
+		Padding(1, 2).
+		MarginTop(1).
+		MarginBottom(1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(w.SecondaryColor))
+
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(w.SecondaryColor)).
+		Bold(true).
+		Underline(true).
+		MarginBottom(1)
+
+	header := headerStyle.Render(fmt.Sprintf("🏴‍☠️  Captain's Weather Log: %s 🏴‍☠️", strings.ToUpper(location)))
+	box := weatherBoxStyle.Render(fmt.Sprintf("%s\n%s", header, w.ASCIIArt))
+
+	fmt.Println(box)
+	fmt.Println()
+	fmt.Println(w.PirateResponse)
 }
