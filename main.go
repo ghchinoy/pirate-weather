@@ -26,9 +26,12 @@ const (
 	defaultLocation = "fort collins, co"
 	defaultModel    = "gemini-3.1-flash-lite-preview"
 	vertexLocation  = "global"
-	wttrBaseURL     = "https://wttr.in"
 	httpTimeout     = 10 * time.Second
 )
+
+// wttrBaseURL is the base URL for the wttr.in weather service.
+// Defined as a var so it can be overridden in tests.
+var wttrBaseURL = "https://wttr.in"
 
 // WeatherResponse holds the structured JSON output from the Gemini model.
 type WeatherResponse struct {
@@ -94,9 +97,9 @@ func fetchWeather(location string) (string, error) {
 	return string(body), nil
 }
 
-// generatePirateWeather sends the weather data to Gemini and returns a structured WeatherResponse.
-func generatePirateWeather(ctx context.Context, client *genai.Client, location, weatherInfo string) (*WeatherResponse, error) {
-	prompt := fmt.Sprintf(`You are Antigravity, a pirate with only one tooth.
+// buildPrompt constructs the pirate weather prompt for the given location and weather data.
+func buildPrompt(location, weatherInfo string) string {
+	return fmt.Sprintf(`You are Antigravity, a pirate with only one tooth.
 Process the following weather report for %s:
 %s
 
@@ -105,7 +108,19 @@ Tasks:
 2. Select a primary hex color code that represents the weather (e.g., #FFD700 for sunny, #AAAAAA for cloudy).
 3. Select a secondary hex color code as an accent.
 4. Write your response telling me the weather, and weave in an explanation of the difference between the A2A 0.3 and A2A 1.0 protocols. Sound like a one-toothed pirate throughout!`, location, weatherInfo)
+}
 
+// parseWeatherResponse unmarshals a JSON string into a WeatherResponse.
+func parseWeatherResponse(raw string) (*WeatherResponse, error) {
+	var wr WeatherResponse
+	if err := json.Unmarshal([]byte(raw), &wr); err != nil {
+		return nil, fmt.Errorf("unmarshal response JSON: %w", err)
+	}
+	return &wr, nil
+}
+
+// generatePirateWeather sends the weather data to Gemini and returns a structured WeatherResponse.
+func generatePirateWeather(ctx context.Context, client *genai.Client, location, weatherInfo string) (*WeatherResponse, error) {
 	config := &genai.GenerateContentConfig{
 		ResponseMIMEType: "application/json",
 		ResponseSchema: &genai.Schema{
@@ -135,7 +150,7 @@ Tasks:
 		},
 	}
 
-	result, err := client.Models.GenerateContent(ctx, defaultModel, genai.Text(prompt), config)
+	result, err := client.Models.GenerateContent(ctx, defaultModel, genai.Text(buildPrompt(location, weatherInfo)), config)
 	if err != nil {
 		return nil, fmt.Errorf("GenerateContent: %w", err)
 	}
@@ -148,11 +163,7 @@ Tasks:
 			if p.Text == "" {
 				continue
 			}
-			var weatherResp WeatherResponse
-			if err := json.Unmarshal([]byte(p.Text), &weatherResp); err != nil {
-				return nil, fmt.Errorf("unmarshal response JSON: %w", err)
-			}
-			return &weatherResp, nil
+			return parseWeatherResponse(p.Text)
 		}
 	}
 
